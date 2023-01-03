@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Document</title>
+  </head>
+  <style></style>
+  <body>
+    <script>
+      let activeEffect;
+      const effectStack = [];
+      const obj = { ok: true, text: "hello world", foo: 1, bar: 1 };
+      const jobQueue = new Set();
+      const p = Promise.resolve();
+      let isFlushing = false;
+      function flushJob() {
+        if (isFlushing) {
+          return;
+        }
+        isFlushing = true;
+        p.then(() => {
+          jobQueue.forEach((job) => {
+            job();
+          });
+        }).finally(() => {
+          isFlushing = false;
+        });
+      }
+      const bucket = new WeakMap();
+      const data = new Proxy(obj, {
+        get(target, key) {
+          track(target, key);
+          return target[key];
+        },
+        set(target, key, newVal) {
+          target[key] = newVal;
+          trigger(target, key);
+        },
+      });
+      function track(target, key) {
+        if (!activeEffect) return;
+        let depsMap = bucket.get(target);
+        if (!depsMap) {
+          bucket.set(target, (depsMap = new Map()));
+        }
+        let deps = depsMap.get(key);
+        if (!deps) {
+          depsMap.set(key, (deps = new Set()));
+        }
+        deps.add(activeEffect);
+        activeEffect.deps.push(deps);
+      }
+      function trigger(target, key) {
+        let depsMap = bucket.get(target);
+        if (!depsMap) {
+          return;
+        }
+        const effects = depsMap.get(key);
+        const effectsToRun = new Set();
+        effects &&
+          effects.forEach((effectFn) => {
+            if (effectFn !== activeEffect) {
+              effectsToRun.add(effectFn);
+            }
+          });
+        effectsToRun.forEach((effectFn) => {
+          if (effectFn.options.scheduler) {
+            effectFn.options.scheduler(effectFn);
+          } else {
+            effectFn();
+          }
+        });
+      }
+      function cleanup(effectFn) {
+        for (let i = 0; i < effectFn.deps.length; i++) {
+          const deps = effectFn.deps[i];
+          deps.delete(effectFn);
+        }
+        effectFn.deps.length = 0;
+      }
+      function effect(fn, options = {}) {
+        const effectFn = () => {
+          cleanup(effectFn);
+          activeEffect = effectFn;
+          effectStack.push(activeEffect);
+          const res = fn();
+          effectStack.pop();
+          activeEffect = effectStack[effectStack.length - 1];
+          return res;
+        };
+        effectFn.deps = [];
+        effectFn.options = options;
+        if (effectFn.options.lazy) {
+          return effectFn;
+        }
+        effectFn();
+      }
+      //计算属性
+      function computed(getter) {
+        let dirty = true;
+        let value;
+        const effectFn = effect(getter, {
+          lazy: true,
+          scheduler() {
+            console.log("118");
+            if (!dirty) {
+              dirty = true;
+              trigger(obj, "value");
+            }
+          },
+        });
+        const obj = {
+          get value() {
+            if (dirty) {
+              value = effectFn();
+              dirty = false;
+            }
+            console.log(activeEffect == fn, "");
+            track(obj, "value");
+            return value;
+          },
+        };
+
+        return obj;
+      }
+      function traverse(value, seen = new Set()) {
+        if (typeof value !== "object" || value === null || seen.has(value))
+          return;
+        seen.add(value)
+        for (const key in value) {
+          traverse(value[key], seen);
+        }
+        return value
+      }
+      //watch函数
+      function watch(source, cb, options = {}) {
+        let getter;
+        if (typeof source === "function") {
+          getter = source;
+        } else {
+            getter = () => traverse(source);
+        }
+        let oldValue, newValue;
+        let cleanup;
+        function onInvalidate(fn) {
+          cleanup = fn
+        }
+        const job = () => {
+          newValue = effectFn();
+          //在调用回调函数cb之前，先调用过期回调
+          if (cleanup) {
+            cleanup();
+          }
+          cb(newValue, oldValue, onInvalidate);
+          oldValue = newValue;
+        }
+        let effectFn = effect(getter, {
+          lazy: true,
+          scheduler: () => {
+            if (options.flush === 'post') {
+              const p = Promise.resolve();
+              p.then(job)
+            } else {
+              job()
+            }
+           
+          }
+        });
+        if (options.immediate) {
+          job()
+        } else {
+          oldValue = effectFn()
+        }
+      }
+    </script>
+  </body>
+</html>
