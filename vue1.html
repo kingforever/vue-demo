@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Document</title>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script src="https://unpkg.com/@vue/reactivity@3.0.5/dist/reactivity.global.js"></script>
+    <script>
+      const { effect, ref } = VueReactivity;
+      function createRenderer(options) {
+        const { createElement, setElementText, insert, patchProps, unmout } =
+          options;
+        function patch(oldVnode, newVnode, container) {
+          if (oldVnode && oldVnode.type !== newVnode.type) {
+            unmout(oldVnode);
+            oldVnode = null;
+          }
+          const { type } = newVnode;
+          if (typeof type === "string") {
+            if (!oldVnode) {
+              mountElement(newVnode, container);
+            }
+          }
+        }
+        function mountElement(vnode, container) {
+          const el = (vnode.el = createElement(vnode.type));
+          if (typeof vnode.children === "string") {
+            setElementText(el, vnode.children);
+          } else if (Array.isArray(vnode.children)) {
+            vnode.children.forEach((child) => {
+              patch(null, child, el);
+            });
+          }
+          if (vnode.props) {
+            for (const key in vnode.props) {
+              patchProps(el, key, null, vnode.props[key]);
+            }
+          }
+          insert(el, container);
+        }
+        function render(vnode, container) {
+          if (vnode) {
+            patch(container._vnode, vnode, container);
+          } else {
+            if (container._vnode) {
+              //旧vnode存在，且新vnode不存在，说明是卸载阶段操作
+              unmout(container._vnode);
+            }
+          }
+          container._vnode = vnode;
+        }
+        return {
+          render,
+        };
+      }
+      const renderer = createRenderer({
+        createElement(tag) {
+          return document.createElement(tag);
+        },
+        setElementText(el, text) {
+          el.textContent = text;
+        },
+        insert(el, parent, anchor = null) {
+          parent.insertBefore(el, anchor);
+        },
+        unmout(vnode) {
+          const parent = vnode.el.parentNode;
+          if (parent) {
+            parent.removeChild(vnode.el);
+          }
+        },
+        patchProps(el, key, preValue, nextValue) {
+          function shouldSetAsProps(el, key, value) {
+            if (key === "form" && el.tagName === "INPUT") {
+              return false;
+            }
+            return key in el;
+          }
+          if (/^on/.test(key)) {
+            const name = key.substring(2).toLowerCase();
+            const invokers = el._vei || (el._vei = {});
+            let invoker = invokers[key];
+            if (nextValue) {
+              if (!invoker) {
+                invoker = el._vei[key] = (e) => {
+                  if (Array.isArray(invoker.value)) {
+                    invoker.value.forEach((fn) => fn(e));
+                  } else {
+                    invoker.value(e);
+                  }
+                };
+                invoker.value = nextValue;
+                el.addEventListener(name, invoker);
+              } else {
+                invoker.value = nextValue;
+              }
+            } else if (invoker) {
+              //新的事件绑定函数不存在，且之前绑定的invoker存在，则移除绑定
+              el.removeEventListener(invoker);
+            }
+          } else if (key === "class") {
+            el.className = nextValue || "";
+          } else if (shouldSetAsProps(el, key, nextValue)) {
+            const type = typeof el[key];
+            if (type === "boolean" && nextValue === "") {
+              el[key] = true;
+            } else {
+              el[key] = nextValue;
+            }
+          } else {
+            el.setAttribute(key, nextValue);
+          }
+        },
+      });
+      const vnode = {
+        type: "button",
+        props: {
+          onClick: [
+            () => {
+              console.log("点击一下!");
+            },
+            () => {
+              console.log("点击两下!");
+            },
+          ],
+        },
+        children: "hello",
+      };
+      effect(() => {
+        renderer.render(vnode, document.getElementById("app"));
+      });
+    </script>
+  </body>
+</html>
