@@ -11,8 +11,12 @@
     <script src="https://unpkg.com/@vue/reactivity@3.0.5/dist/reactivity.global.js"></script>
     <script>
       const { effect, ref } = VueReactivity;
+      //文本节点的type标识
+      const Text = Symbol();
+      const Comment = Symbol();
+      const Fragment = Symbol();
       function createRenderer(options) {
-        const { createElement, setElementText, insert, patchProps, unmout } =
+        const { createElement, setText, setElementText, insert, createText, patchProps, unmout } =
           options;
         function patch(oldVnode, newVnode, container) {
           if (oldVnode && oldVnode.type !== newVnode.type) {
@@ -23,6 +27,26 @@
           if (typeof type === "string") {
             if (!oldVnode) {
               mountElement(newVnode, container);
+            } else {
+              patchElement(oldVnode, newVnode)
+            }
+          } else if (type === Text) {
+            if (!oldVnode) {
+              const el = newVnode.el = createText(newVnode.children)
+              insert(el, container)
+            } else {
+              const el = newVnode.el = oldVnode.el;
+              if (newVnode.children !== oldVnode.children) {
+                setText(el, newVnode.children)
+              }
+            }
+          } else if (type === Fragment) {
+            if (!oldVnode) {
+              newVnode.children.forEach((c)=> {
+                patch(null, c, container)
+              })
+            } else {
+              patchChildren(oldVnode, newVnode, container)
             }
           }
         }
@@ -53,6 +77,54 @@
           }
           container._vnode = vnode;
         }
+        function patchElement(oldVnode, newVnode) {
+          const el = newVnode.el = oldVnode.el;
+          const oldProps = oldVnode.props;
+          const newProps = newVnode.props;
+          for (const key in newProps) {
+            if(newProps[key] !== oldProps[key]) {
+              patchProps(el, key, oldProps[key], newProps[key]);
+            }
+          }
+          for (const key in oldProps) {
+            if (!(key in oldProps)) {
+              patchProps(el, key, oldProps[key], null)
+            }
+          }
+          patchChildren(oldVnode, newVnode, el)
+        }
+        function patchChildren(oldVnode, newVnode) {
+          // n2 代表新节点
+          // n1 代表旧节点
+          //新节点是文本节点
+          if (typeof newVnode.children === 'string') {
+            if (Array.isArray(oldVnode.children)) {
+              oldVnode.children.forEach((c) => {
+                unmout(c)
+              })
+            }
+            setElementText(container, newVnode.children);
+            //新节点是一组节点
+          } else if (Array.isArray(newVnode.children)) {
+            if (Array.isArray(oldVnode.children)) {
+
+            } else {
+              setElementText(container, '');
+              n2.children.forEach((c) => {
+                patch(null, c, container);
+              })
+            } 
+          } else {
+            //新节点不存在
+            if (Array.isArray(oldVnode.children)) {
+              oldVnode.children.forEach((c) => {
+                unmout(c)
+              })
+            } else if (typeof oldVnode.children === 'string') {
+              setElementText(container, '')
+            }
+          }
+        }
         return {
           render,
         };
@@ -68,10 +140,22 @@
           parent.insertBefore(el, anchor);
         },
         unmout(vnode) {
+          if (vnode.type === 'Fragment') {
+            vnode.children.forEach((c) => {
+              unmout(c);
+            });
+            return 
+          }
           const parent = vnode.el.parentNode;
           if (parent) {
             parent.removeChild(vnode.el);
           }
+        },
+        createText(text) {
+          return document.createTextNode(text)
+        },
+        setText(el, text) {
+          el.nodeValue = text
         },
         patchProps(el, key, preValue, nextValue) {
           function shouldSetAsProps(el, key, value) {
@@ -87,6 +171,7 @@
             if (nextValue) {
               if (!invoker) {
                 invoker = el._vei[key] = (e) => {
+                  if (e.timeStamp < invoker.attached) return 
                   if (Array.isArray(invoker.value)) {
                     invoker.value.forEach((fn) => fn(e));
                   } else {
@@ -94,6 +179,7 @@
                   }
                 };
                 invoker.value = nextValue;
+                invoker.attached = performance.now();
                 el.addEventListener(name, invoker);
               } else {
                 invoker.value = nextValue;
