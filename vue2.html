@@ -23,7 +23,7 @@
           insert,
           createText,
           patchProps,
-          unmout,
+          unmount,
         } = options;
         function patch(oldVnode, newVnode, container) {
           if (oldVnode && oldVnode.type !== newVnode.type) {
@@ -113,58 +113,7 @@
             setElementText(container, n2.children);
             //新节点是一组节点
           } else if (Array.isArray(n2.children)) {
-            if (Array.isArray(n1.children)) {
-              const oldChildren = n1.children;
-              const newChildren = n2.children;
-              //用来存储寻找过程中遇到的最大索引值
-              let lastIndex = 0;
-              for (let i = 0; i < newChildren.length; i++) {
-                const newVnode = newChildren[i];
-                let  j = 0, find = false;
-                for (;j < oldChildren.length; j++) {
-                  const oldVnode = oldChildren[j];
-                  if (newVnode.key === oldVnode.key) {
-                    find = true
-                    patch(oldVnode, newVnode, container);
-                    if (j < lastIndex) {
-                      const prevNode = newChildren[i - 1];
-                      if (prevNode) {
-                        const anchor = prevNode.el.nextSibling;
-                        insert(newVnode.el, container, anchor);
-                      }
-                    } else {
-                      lastIndex = j;
-                    }
-
-                    break;
-                  }
-                }
-                if (!find) {
-                  const prevNode =  newChildren[i - 1];
-                  let anchor = null;
-                  if (prevNode) {
-                    anchor = prevNode.el.nextSibling;
-                  } else {
-                    anchor = container.firstChild;
-                  }
-                  patch(null, newVnode, container, anchor)
-                }
-              }
-              for (let i = 0; i < oldChildren.length; i++) {
-                const oldVnode = oldChildren[i];
-                const has = newChildren.find(
-                  vnode => vnode.key === oldVnode.key
-                )
-                if (!has) {
-                  unmout(oldVnode)
-                }
-              }
-            } else {
-              setElementText(container, "");
-              n2.children.forEach((c) => {
-                patch(null, c, container);
-              });
-            }
+            patchKeyedChildren(n1, n2, container);
           } else {
             //新节点不存在
             if (Array.isArray(n1.children)) {
@@ -176,10 +125,71 @@
             }
           }
         }
+        function patchKeyedChildren(n1, n2, container) {
+          const oldChildren = n1.children;
+          const newChildren = n2.children;
+          let oldStartIdx = 0;
+          let oldEndIdx = oldChildren.length - 1;
+          let newStartIdx = 0;
+          let newEndIdx = newChildren.length - 1;
+          let oldStartVNode = oldChildren[oldStartIdx];
+          let oldEndVNode = oldChildren[oldEndIdx];
+          let newStartVNode = newChildren[newStartIdx];
+          let newEndVNode = newChildren[newEndIdx];
+          while (oldStartIdx <= oldEndIdx && newStartIdx <= newEndIdx) {
+            if (oldStartVNode.key === newStartVNode.key) {
+              patch(oldStartVNode, newStartVNode, container);
+              oldStartVNode = oldChildren[++oldStartIdx];
+              newStartVNode = newChildren[++newStartIdx];
+            } else if (oldEndVNode.key === newEndVNode.key) {
+              patch(oldEndVNode, newEndVNode, container);
+              oldEndVNode = oldChildren[--oldEndIdx];
+              newEndVNode = newChildren[--newEndIdx];
+            } else if (oldStartVNode.key === newEndVNode.key) {
+              patch(oldStartVNode, newEndVNode, container);
+              insert(oldStartVNode.el, container, oldStartVNode.el.nextSibling);
+              oldStartVNode = oldChildren[++oldStartIdx];
+              newEndVNode = newChildren[--newEndIdx];
+            } else if (oldEndVNode.key === newStartVNode.key) {
+              // 步骤四：oldEndVNode 和 newStartVNode 比对
+              patch(oldEndVNode, newStartVNode, container);
+              insert(oldEndVNode.el, container, oldStartVNode.el);
+              oldEndVNode = oldChildren[--oldEndIdx];
+              newStartVNode = newChildren[++newStartIdx];
+            } else {
+              // 遍历旧 children，试图寻找与 newStartVNode 拥有相同 key 值的元素
+              const idxInOld = oldChildren.findIndex(
+                (node) => node.key === newStartVNode.key
+              );
+              if (idxInOld > 0) {
+                const vnodeToMove = oldChildren[idxInOld];
+                patch(vnodeToMove, newStartVNode, container);
+                insert(vnodeToMove.el, container, oldStartVNode.el);
+                oldChildren[idxInOld] = undefined;
+              } else {
+                patch(null, newStartVNode, container, oldStartVNode.el);
+              }
+
+              newStartVNode = newChildren[++newStartIdx];
+            }
+          }
+          if (oldEndIdx < oldStartIdx && newStartIdx <= newEndIdx) {
+            // 添加新节点
+            for (let i = newStartIdx; i <= newEndIdx; i++) {
+              patch(null, newChildren[i], container, oldStartVNode.el);
+            }
+          } else if (newEndIdx < newStartIdx && oldStartIdx <= oldEndIdx) {
+            // 移除操作
+            for (let i = oldStartIdx; i <= oldEndIdx; i++) {
+              unmount(oldChildren[i]);
+            }
+          }
+        }
         return {
           render,
         };
       }
+
       const renderer = createRenderer({
         createElement(tag) {
           return document.createElement(tag);
@@ -188,10 +198,10 @@
           el.textContent = text;
         },
         insert(el, parent, anchor = null) {
-        console.log(el, anchor, 177)
+          console.log(el, anchor, 177);
           parent.insertBefore(el, anchor);
         },
-        unmout(vnode) {
+        unmount(vnode) {
           if (vnode.type === "Fragment") {
             vnode.children.forEach((c) => {
               unmout(c);
@@ -275,8 +285,6 @@
         console.log("update");
         renderer.render(newVnode, document.querySelector("#app"));
       }, 2000);
-
-  
     </script>
   </body>
 </html>
